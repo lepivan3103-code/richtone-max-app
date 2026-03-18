@@ -131,55 +131,34 @@ export default function App() {
       machineModel: product.machineModel,
       partNumber: product.partNumber,
       priceRub: product.priceRub,
+      delivery: product.delivery,
       source: "webapp_catalog",
       user: webApp?.initDataUnsafe?.user || null,
-      phone: null,
     };
 
     try {
-      setRequestResult(`Запрашиваем номер по товару: ${product.title}`);
-      console.log("Order start payload:", payload);
-
-      if (!webApp?.requestContact) {
-        setRequestResult("Приложение открыто не в MAX или requestContact недоступен.");
-        console.log("requestContact unavailable");
-        alert("Открой мини-приложение внутри MAX");
-        return;
-      }
-
-      const contactResult = await webApp.requestContact();
-      console.log("contactResult:", contactResult);
-
-      const phone =
-        contactResult?.phone_number ||
-        contactResult?.phoneNumber ||
-        contactResult?.contact?.phone_number ||
-        contactResult?.phone ||
-        null;
-
-      if (!phone) {
-        setRequestResult(
-          "Номер не получен. Пользователь не поделился номером или MAX не вернул данные."
-        );
-        alert("Номер не получен");
-        return;
-      }
-
-      payload.phone = phone;
-      console.log("payload to sendData:", payload);
+      console.log("Sending payload:", payload);
 
       if (webApp?.sendData) {
         webApp.sendData(JSON.stringify(payload));
-        setRequestResult(`Заявка отправлена. Телефон: ${phone}`);
-        alert(`Заявка отправлена.\nТелефон: ${phone}`);
-        return;
       }
 
-      setRequestResult(`Телефон получен: ${phone}, но sendData недоступен.`);
-      alert(`Телефон получен: ${phone}`);
+      if (webApp?.requestContact) {
+        try {
+          webApp.requestContact();
+        } catch (contactError) {
+          console.error("requestContact error:", contactError);
+        }
+      }
+
+      setRequestResult(
+        `Заявка по товару "${product.title}" отправлена. Пользователю предложено поделиться номером.`
+      );
+
+      alert("Заявка отправлена. Пользователю предложено поделиться номером.");
     } catch (error) {
-      console.error("Ошибка при заявке:", error);
-      setRequestResult("Ошибка при получении контакта или отправке заявки.");
+      console.error("Ошибка при отправке заявки:", error);
+      setRequestResult("Ошибка при отправке заявки.");
       alert("Ошибка при отправке заявки");
     }
   }
