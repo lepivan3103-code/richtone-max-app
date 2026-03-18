@@ -11,7 +11,8 @@ const mockProducts = [
     compatibility: "PC200-7 / PC210-7",
     priceRub: 1280000,
     delivery: "С учетом доставки до Москвы",
-    description: "Гидравлический насос для экскаваторов Komatsu. Подбор по модели техники и номеру детали.",
+    description:
+      "Гидравлический насос для экскаваторов Komatsu. Подбор по модели техники и номеру детали.",
   },
   {
     id: 2,
@@ -23,7 +24,8 @@ const mockProducts = [
     compatibility: "CAT 320D / 323D",
     priceRub: 2450000,
     delivery: "С учетом доставки до Москвы",
-    description: "Дизельный двигатель после восстановления. Фото и видеоотчет перед отправкой.",
+    description:
+      "Дизельный двигатель после восстановления. Фото и видеоотчет перед отправкой.",
   },
   {
     id: 3,
@@ -35,7 +37,8 @@ const mockProducts = [
     compatibility: "ZX330 / ZX350 / ZX360",
     priceRub: 890000,
     delivery: "С учетом доставки до Москвы",
-    description: "Бортовой редуктор для экскаваторов Hitachi. Возможен подбор аналога.",
+    description:
+      "Бортовой редуктор для экскаваторов Hitachi. Возможен подбор аналога.",
   },
 ];
 
@@ -54,6 +57,7 @@ export default function App() {
   const [category, setCategory] = useState("Все");
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [statusText, setStatusText] = useState("MAX Bridge не обнаружен");
+  const [requestResult, setRequestResult] = useState("");
 
   useEffect(() => {
     const webApp = getWebApp();
@@ -63,8 +67,11 @@ export default function App() {
 
     if (webApp) {
       setStatusText("MAX Bridge подключен");
+      console.log("MAX WebApp detected", webApp);
+      console.log("initDataUnsafe:", webApp?.initDataUnsafe || null);
     } else {
       setStatusText("Открыто вне MAX");
+      console.log("window.WebApp not found");
     }
   }, []);
 
@@ -73,8 +80,9 @@ export default function App() {
     if (!webApp?.BackButton) return;
 
     if (selectedProduct) {
-      webApp.BackButton.show();
       const handleBack = () => setSelectedProduct(null);
+
+      webApp.BackButton.show();
       webApp.BackButton.onClick(handleBack);
 
       return () => {
@@ -90,6 +98,7 @@ export default function App() {
     return mockProducts.filter((item) => {
       const matchesCategory = category === "Все" || item.category === category;
       const q = search.trim().toLowerCase();
+
       const haystack = [
         item.title,
         item.category,
@@ -107,6 +116,7 @@ export default function App() {
 
   function handleOpenProduct(product) {
     setSelectedProduct(product);
+    setRequestResult("");
   }
 
   async function handleOrder(product) {
@@ -123,31 +133,55 @@ export default function App() {
       priceRub: product.priceRub,
       source: "webapp_catalog",
       user: webApp?.initDataUnsafe?.user || null,
+      phone: null,
     };
 
-    if (webApp?.sendData) {
-      try {
+    try {
+      setRequestResult(`Запрашиваем номер по товару: ${product.title}`);
+      console.log("Order start payload:", payload);
+
+      if (!webApp?.requestContact) {
+        setRequestResult("Приложение открыто не в MAX или requestContact недоступен.");
+        console.log("requestContact unavailable");
+        alert("Открой мини-приложение внутри MAX");
+        return;
+      }
+
+      const contactResult = await webApp.requestContact();
+      console.log("contactResult:", contactResult);
+
+      const phone =
+        contactResult?.phone_number ||
+        contactResult?.phoneNumber ||
+        contactResult?.contact?.phone_number ||
+        contactResult?.phone ||
+        null;
+
+      if (!phone) {
+        setRequestResult(
+          "Номер не получен. Пользователь не поделился номером или MAX не вернул данные."
+        );
+        alert("Номер не получен");
+        return;
+      }
+
+      payload.phone = phone;
+      console.log("payload to sendData:", payload);
+
+      if (webApp?.sendData) {
         webApp.sendData(JSON.stringify(payload));
-        alert(`Заявка по товару \"${product.title}\" отправлена в бот.`);
+        setRequestResult(`Заявка отправлена. Телефон: ${phone}`);
+        alert(`Заявка отправлена.\nТелефон: ${phone}`);
         return;
-      } catch (error) {
-        console.error("Ошибка sendData", error);
       }
-    }
 
-    if (webApp?.requestContact) {
-      try {
-        const contactResult = await webApp.requestContact();
-        console.log("Контакт пользователя:", contactResult);
-        alert(`Заявка по товару \"${product.title}\" отправлена.`);
-        return;
-      } catch (error) {
-        console.error("Ошибка requestContact", error);
-      }
+      setRequestResult(`Телефон получен: ${phone}, но sendData недоступен.`);
+      alert(`Телефон получен: ${phone}`);
+    } catch (error) {
+      console.error("Ошибка при заявке:", error);
+      setRequestResult("Ошибка при получении контакта или отправке заявки.");
+      alert("Ошибка при отправке заявки");
     }
-
-    console.log("Заявка:", payload);
-    alert(`Тестовая заявка по товару \"${product.title}\" создана.`);
   }
 
   if (selectedProduct) {
@@ -160,16 +194,30 @@ export default function App() {
           <div style={styles.status}>{statusText}</div>
         </div>
 
+        {requestResult && <div style={styles.resultBox}>{requestResult}</div>}
+
         <h1 style={styles.title}>{selectedProduct.title}</h1>
 
         <div style={styles.detailCard}>
           <div style={styles.detailGrid}>
-            <div><strong>Категория:</strong> {selectedProduct.category}</div>
-            <div><strong>Бренд:</strong> {selectedProduct.brand}</div>
-            <div><strong>Модель:</strong> {selectedProduct.machineModel}</div>
-            <div><strong>Артикул:</strong> {selectedProduct.partNumber}</div>
-            <div><strong>Совместимость:</strong> {selectedProduct.compatibility}</div>
-            <div><strong>Доставка:</strong> {selectedProduct.delivery}</div>
+            <div>
+              <strong>Категория:</strong> {selectedProduct.category}
+            </div>
+            <div>
+              <strong>Бренд:</strong> {selectedProduct.brand}
+            </div>
+            <div>
+              <strong>Модель:</strong> {selectedProduct.machineModel}
+            </div>
+            <div>
+              <strong>Артикул:</strong> {selectedProduct.partNumber}
+            </div>
+            <div>
+              <strong>Совместимость:</strong> {selectedProduct.compatibility}
+            </div>
+            <div>
+              <strong>Доставка:</strong> {selectedProduct.delivery}
+            </div>
           </div>
 
           <div style={styles.priceBox}>{formatPrice(selectedProduct.priceRub)}</div>
@@ -177,10 +225,16 @@ export default function App() {
           <p style={styles.description}>{selectedProduct.description}</p>
 
           <div style={styles.actionRow}>
-            <button style={styles.primaryButton} onClick={() => handleOrder(selectedProduct)}>
+            <button
+              style={styles.primaryButton}
+              onClick={() => handleOrder(selectedProduct)}
+            >
               Оставить заявку
             </button>
-            <button style={styles.secondaryButton} onClick={() => setSelectedProduct(null)}>
+            <button
+              style={styles.secondaryButton}
+              onClick={() => setSelectedProduct(null)}
+            >
               Вернуться в каталог
             </button>
           </div>
@@ -194,10 +248,14 @@ export default function App() {
       <div style={styles.topBar}>
         <div>
           <h1 style={styles.title}>Richtone каталог</h1>
-          <div style={styles.subtitle}>Запчасти для спецтехники с ценами в рублях и доставкой до Москвы</div>
+          <div style={styles.subtitle}>
+            Запчасти для спецтехники с ценами в рублях и доставкой до Москвы
+          </div>
         </div>
         <div style={styles.status}>{statusText}</div>
       </div>
+
+      {requestResult && <div style={styles.resultBox}>{requestResult}</div>}
 
       <input
         value={search}
@@ -225,7 +283,9 @@ export default function App() {
         {filteredProducts.map((p) => (
           <div key={p.id} style={styles.card}>
             <div style={styles.cardTitle}>{p.title}</div>
-            <div style={styles.cardMeta}>{p.brand} • {p.machineModel}</div>
+            <div style={styles.cardMeta}>
+              {p.brand} • {p.machineModel}
+            </div>
             <div style={styles.cardMeta}>Артикул: {p.partNumber}</div>
             <div style={styles.price}>{formatPrice(p.priceRub)}</div>
             <div style={styles.delivery}>🚚 {p.delivery}</div>
@@ -234,7 +294,10 @@ export default function App() {
               <button style={styles.primaryButton} onClick={() => handleOrder(p)}>
                 Оставить заявку
               </button>
-              <button style={styles.secondaryButton} onClick={() => handleOpenProduct(p)}>
+              <button
+                style={styles.secondaryButton}
+                onClick={() => handleOpenProduct(p)}
+              >
                 Подробнее
               </button>
             </div>
@@ -243,7 +306,9 @@ export default function App() {
       </div>
 
       {filteredProducts.length === 0 && (
-        <div style={styles.emptyState}>Ничего не найдено. Измени поиск или категорию.</div>
+        <div style={styles.emptyState}>
+          Ничего не найдено. Измени поиск или категорию.
+        </div>
       )}
     </div>
   );
@@ -256,6 +321,7 @@ const styles = {
     background: "#f6f7f9",
     minHeight: "100vh",
     color: "#111827",
+    boxSizing: "border-box",
   },
   topBar: {
     display: "flex",
@@ -290,6 +356,15 @@ const styles = {
     border: "1px solid #e5e7eb",
     borderRadius: 999,
     padding: "6px 10px",
+  },
+  resultBox: {
+    marginBottom: 16,
+    background: "#fff7ed",
+    border: "1px solid #fdba74",
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 14,
+    color: "#9a3412",
   },
   input: {
     width: "100%",
