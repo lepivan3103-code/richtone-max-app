@@ -49,7 +49,13 @@ function formatPrice(value) {
 }
 
 function getWebApp() {
-  return window?.WebApp || null;
+  if (window?.WebApp) return window.WebApp;
+  if (window?.Telegram?.WebApp) return window.Telegram.WebApp;
+  return null;
+}
+
+function createRequestId() {
+  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export default function App() {
@@ -58,20 +64,25 @@ export default function App() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [statusText, setStatusText] = useState("MAX Bridge не обнаружен");
   const [requestResult, setRequestResult] = useState("");
+  const [sendingProductId, setSendingProductId] = useState(null);
 
   useEffect(() => {
     const webApp = getWebApp();
 
-    if (webApp?.ready) webApp.ready();
-    if (webApp?.expand) webApp.expand();
+    try {
+      if (webApp?.ready) webApp.ready();
+      if (webApp?.expand) webApp.expand();
+    } catch (error) {
+      console.error("Ошибка инициализации WebApp:", error);
+    }
 
     if (webApp) {
       setStatusText("MAX Bridge подключен");
-      console.log("MAX WebApp detected", webApp);
+      console.log("WebApp detected:", webApp);
       console.log("initDataUnsafe:", webApp?.initDataUnsafe || null);
     } else {
       setStatusText("Открыто вне MAX");
-      console.log("window.WebApp not found");
+      console.log("WebApp bridge not found");
     }
   }, []);
 
@@ -82,16 +93,28 @@ export default function App() {
     if (selectedProduct) {
       const handleBack = () => setSelectedProduct(null);
 
-      webApp.BackButton.show();
-      webApp.BackButton.onClick(handleBack);
+      try {
+        webApp.BackButton.show();
+        webApp.BackButton.onClick(handleBack);
+      } catch (error) {
+        console.error("Ошибка BackButton:", error);
+      }
 
       return () => {
-        webApp.BackButton.offClick(handleBack);
-        webApp.BackButton.hide();
+        try {
+          webApp.BackButton.offClick(handleBack);
+          webApp.BackButton.hide();
+        } catch (error) {
+          console.error("Ошибка очистки BackButton:", error);
+        }
       };
     }
 
-    webApp.BackButton.hide();
+    try {
+      webApp.BackButton.hide();
+    } catch (error) {
+      console.error("Ошибка скрытия BackButton:", error);
+    }
   }, [selectedProduct]);
 
   const filteredProducts = useMemo(() => {
@@ -122,48 +145,54 @@ export default function App() {
   async function handleOrder(product) {
     const webApp = getWebApp();
 
+    if (sendingProductId === product.id) return;
+
     const payload = {
       action: "product_request",
+      requestId: createRequestId(),
+      clientTime: new Date().toISOString(),
+      source: "MAX WebApp Richtone",
       productId: product.id,
       title: product.title,
       category: product.category,
       brand: product.brand,
       machineModel: product.machineModel,
       partNumber: product.partNumber,
+      compatibility: product.compatibility,
       priceRub: product.priceRub,
       delivery: product.delivery,
-      source: "webapp_catalog",
-      user: webApp?.initDataUnsafe?.user || null,
+      description: product.description,
     };
 
     try {
-      console.log("Sending payload:", payload);
+      setSendingProductId(product.id);
 
       if (webApp?.sendData) {
-        webApp.sendData(JSON.stringify(payload));
+        const dataToSend = JSON.stringify(payload);
+
+        console.log("Отправка payload в бот:", payload);
+        webApp.sendData(dataToSend);
+
+        setRequestResult(`✅ Заявка по товару "${product.title}" отправлена в бот.`);
+        alert("Заявка отправлена в бот");
+
+        return;
       }
 
-      if (webApp?.requestContact) {
-        try {
-          webApp.requestContact();
-        } catch (contactError) {
-          console.error("requestContact error:", contactError);
-        }
-      }
-
-      setRequestResult(
-        `Заявка по товару "${product.title}" отправлена. Пользователю предложено поделиться номером.`
-      );
-
-      alert("Заявка отправлена. Пользователю предложено поделиться номером.");
+      setRequestResult("⚠️ sendData недоступен. Открой мини-приложение внутри MAX.");
+      alert("Открой мини-приложение внутри MAX");
     } catch (error) {
       console.error("Ошибка при отправке заявки:", error);
-      setRequestResult("Ошибка при отправке заявки.");
+      setRequestResult("❌ Ошибка при отправке заявки в бот.");
       alert("Ошибка при отправке заявки");
+    } finally {
+      setSendingProductId(null);
     }
   }
 
   if (selectedProduct) {
+    const isSending = sendingProductId === selectedProduct.id;
+
     return (
       <div style={styles.page}>
         <div style={styles.headerRow}>
@@ -205,11 +234,16 @@ export default function App() {
 
           <div style={styles.actionRow}>
             <button
-              style={styles.primaryButton}
+              style={{
+                ...styles.primaryButton,
+                ...(isSending ? styles.primaryButtonDisabled : {}),
+              }}
               onClick={() => handleOrder(selectedProduct)}
+              disabled={isSending}
             >
-              Оставить заявку
+              {isSending ? "Отправка..." : "Оставить заявку"}
             </button>
+
             <button
               style={styles.secondaryButton}
               onClick={() => setSelectedProduct(null)}
@@ -259,29 +293,41 @@ export default function App() {
       </div>
 
       <div style={styles.list}>
-        {filteredProducts.map((p) => (
-          <div key={p.id} style={styles.card}>
-            <div style={styles.cardTitle}>{p.title}</div>
-            <div style={styles.cardMeta}>
-              {p.brand} • {p.machineModel}
-            </div>
-            <div style={styles.cardMeta}>Артикул: {p.partNumber}</div>
-            <div style={styles.price}>{formatPrice(p.priceRub)}</div>
-            <div style={styles.delivery}>🚚 {p.delivery}</div>
+        {filteredProducts.map((p) => {
+          const isSending = sendingProductId === p.id;
 
-            <div style={styles.actionRow}>
-              <button style={styles.primaryButton} onClick={() => handleOrder(p)}>
-                Оставить заявку
-              </button>
-              <button
-                style={styles.secondaryButton}
-                onClick={() => handleOpenProduct(p)}
-              >
-                Подробнее
-              </button>
+          return (
+            <div key={p.id} style={styles.card}>
+              <div style={styles.cardTitle}>{p.title}</div>
+              <div style={styles.cardMeta}>
+                {p.brand} • {p.machineModel}
+              </div>
+              <div style={styles.cardMeta}>Артикул: {p.partNumber}</div>
+              <div style={styles.price}>{formatPrice(p.priceRub)}</div>
+              <div style={styles.delivery}>🚚 {p.delivery}</div>
+
+              <div style={styles.actionRow}>
+                <button
+                  style={{
+                    ...styles.primaryButton,
+                    ...(isSending ? styles.primaryButtonDisabled : {}),
+                  }}
+                  onClick={() => handleOrder(p)}
+                  disabled={isSending}
+                >
+                  {isSending ? "Отправка..." : "Оставить заявку"}
+                </button>
+
+                <button
+                  style={styles.secondaryButton}
+                  onClick={() => handleOpenProduct(p)}
+                >
+                  Подробнее
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {filteredProducts.length === 0 && (
@@ -419,6 +465,10 @@ const styles = {
     color: "#ffffff",
     cursor: "pointer",
     fontWeight: 600,
+  },
+  primaryButtonDisabled: {
+    opacity: 0.7,
+    cursor: "not-allowed",
   },
   secondaryButton: {
     padding: "11px 14px",
